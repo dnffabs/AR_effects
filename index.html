@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>双手 AR 维度裂隙</title>
+  <link rel="stylesheet" href="src/styles.css" />
+  <script>
+    // MediaPipe 脚本加载失败标记（用于中文错误提示）
+    window.__mpLoadError = false;
+  </script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"
+    crossorigin="anonymous"
+    onerror="window.__mpLoadError = true;"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1.1675465747/selfie_segmentation.js"
+    crossorigin="anonymous"
+    onerror="window.__mpLoadError = true;"></script>
+</head>
+<body>
+  <!-- 摄像头源（隐藏，仅作为绘制来源） -->
+  <video id="cam" playsinline muted autoplay></video>
+
+  <!-- 主渲染画布 -->
+  <canvas id="stage"></canvas>
+
+  <!-- 极简控制栏 -->
+  <div id="controls" class="controls">
+    <button id="btnCamera" class="btn" type="button">启动摄像头</button>
+    <button id="btnDemo" class="btn" type="button">演示模式</button>
+    <button id="btnReset" class="btn btn-ghost" type="button">重置</button>
+    <div class="slider-wrap">
+      <label for="smooth">跟手平滑度</label>
+      <input id="smooth" type="range" min="0" max="100" value="50" />
+    </div>
+  </div>
+
+  <!-- 状态 / 提示 -->
+  <div id="status" class="status"></div>
+  <!-- 错误提示 -->
+  <div id="error" class="error hidden"></div>
+
+  <script src="src/app.js"></script>
+</body>
+</html>
