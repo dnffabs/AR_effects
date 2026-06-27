@@ -8,7 +8,7 @@
 
 (function () {
   /* ---------- 关键点索引 ---------- */
-  const LM = { THUMB: 4, INDEX: 8, MIDDLE: 12, PINKY: 20 };
+  const LM = { THUMB: 4, INDEX: 8, MIDDLE: 12 };
 
   /* ---------- DOM ---------- */
   const video = document.getElementById('cam');
@@ -130,64 +130,148 @@
     return c;
   }
 
-  /* 通用网点（halftone / 波点）纹理：网点之间为透明，可透出背景。
-   * tint  : 极淡底色（rgba），保留一点色彩；可为 null 完全透明
-   * ink   : 网点主色
-   * core  : 较大网点的深色内核（增加层次，可为 null）
-   * step  : 网点间距 */
-  function makeHalftone(tint, ink, core, step) {
-    const S = 512;
-    const c = newTexCanvas(S);
-    const x = c.getContext('2d');
-    if (tint) {
-      x.fillStyle = tint;
-      x.fillRect(0, 0, S, S);
-    }
-    const st = step || 16;
-    for (let yy = st * 0.5; yy < S + st; yy += st) {
-      for (let xx = st * 0.5; xx < S + st; xx += st) {
-        let v = 0.5
-          + 0.30 * Math.sin(xx * 0.017 + yy * 0.011)
-          + 0.26 * Math.sin(xx * 0.043 - yy * 0.029 + 1.2)
-          + 0.16 * Math.sin((xx + yy) * 0.061);
-        v += (Math.random() - 0.5) * 0.22;
-        v = clamp(v, 0, 1);
-        const r = st * 0.62 * Math.sqrt(v);
-        if (r < 0.4) continue;
-        x.fillStyle = ink;
-        x.beginPath();
-        x.arc(xx, yy, r, 0, Math.PI * 2);
-        x.fill();
-        if (core && r > st * 0.34) {
-          x.fillStyle = core;
-          x.beginPath();
-          x.arc(xx, yy, r * 0.46, 0, Math.PI * 2);
-          x.fill();
-        }
+  /* =====================================================================
+   * Risograph 半色调肖像叠印风格
+   *   左侧纯色油墨厚涂 + 右侧半色调网点由灰度控制大小 + 油墨颗粒
+   *   人物肖像由 drawLayer 实时采样灰度 → 渲染为单色网点阵列
+   * ===================================================================== */
+
+  // Riso 半色调网点（左大右小，点大小由 x 位置的 power 衰减控制）
+  function risoDots(cx, S, color, step) {
+    cx.fillStyle = color;
+    for (let y = 0; y < S; y += step) {
+      for (let x = 0; x < S; x += step) {
+        var t = 1 - x / S;
+        t = Math.pow(t, 2.4);
+        var r = t * step * 0.48;
+        if (r < 0.5) continue;
+        cx.beginPath();
+        cx.arc(x, y, r, 0, Math.PI * 2);
+        cx.fill();
       }
     }
-    addGrain(x, S, S, 16, 0); // 仅扰动已有网点像素，透明空隙保持透明
+  }
+
+  // 油墨颗粒（白色 + 黑色微噪点，模拟印刷不均匀）
+  function risoGrain(cx, S) {
+    for (var i = 0; i < 6000; i++) {
+      cx.fillStyle = 'rgba(255,255,255,' + (Math.random() * 0.05).toFixed(3) + ')';
+      cx.fillRect(Math.random() * S, Math.random() * S, 1, 1);
+    }
+    for (var j = 0; j < 3000; j++) {
+      cx.fillStyle = 'rgba(0,0,0,' + (Math.random() * 0.03).toFixed(3) + ')';
+      cx.fillRect(Math.random() * S, Math.random() * S, 1, 1);
+    }
+  }
+
+  // 半透明暖白底膜
+  function risoBase(cx, S) {
+    cx.globalCompositeOperation = 'source-over';
+    cx.globalAlpha = 1;
+    cx.fillStyle = 'rgba(248,245,238,0.62)';
+    cx.fillRect(0, 0, S, S);
+  }
+
+  /* Layer A —— 钴蓝：左侧纯色厚墨 + 蓝色网点右衰减 */
+  function makeTexA() {
+    var S = 512, c = newTexCanvas(S), x = c.getContext('2d');
+    risoBase(x, S);
+    // 左侧纯色墨块
+    var g = x.createLinearGradient(0, 0, S * 0.45, 0);
+    g.addColorStop(0, '#08238c');
+    g.addColorStop(0.7, '#08238c');
+    g.addColorStop(1, 'rgba(8,35,140,0)');
+    x.fillStyle = g;
+    x.fillRect(0, 0, S, S);
+    // 半色调网点
+    risoDots(x, S, '#08238c', 12);
+    // 左侧厚墨暗压
+    var g2 = x.createLinearGradient(0, 0, S * 0.3, 0);
+    g2.addColorStop(0, 'rgba(0,0,0,0.25)');
+    g2.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = g2;
+    x.fillRect(0, 0, S, S);
+    // 颗粒
+    risoGrain(x, S);
+    addGrain(x, S, S, 25, 0);
     return c;
   }
 
-  /* Layer A —— 深红网点 */
-  function makeTexA() {
-    return makeHalftone('rgba(70,14,16,0.12)', '#a8242a', '#2c0708', 16);
-  }
-
-  /* Layer B —— 蓝色网点 */
+  /* Layer B —— 大红：左侧纯色厚墨 + 红色网点右衰减 */
   function makeTexB() {
-    return makeHalftone('rgba(16,38,68,0.12)', '#2a86b3', '#0a1f44', 15);
+    var S = 512, c = newTexCanvas(S), x = c.getContext('2d');
+    risoBase(x, S);
+    // 左侧纯色墨块
+    var g = x.createLinearGradient(0, 0, S * 0.45, 0);
+    g.addColorStop(0, '#e40000');
+    g.addColorStop(0.7, '#e40000');
+    g.addColorStop(1, 'rgba(228,0,0,0)');
+    x.fillStyle = g;
+    x.fillRect(0, 0, S, S);
+    // 半色调网点
+    risoDots(x, S, '#e40000', 12);
+    // 左侧厚墨暗压
+    var g2 = x.createLinearGradient(0, 0, S * 0.3, 0);
+    g2.addColorStop(0, 'rgba(0,0,0,0.25)');
+    g2.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = g2;
+    x.fillRect(0, 0, S, S);
+    // 颗粒
+    risoGrain(x, S);
+    addGrain(x, S, S, 25, 0);
+    return c;
   }
 
-  /* Layer C —— 绿色网点 */
-  function makeTexC() {
-    return makeHalftone('rgba(34,56,36,0.12)', '#4a8a50', '#123018', 17);
-  }
+  var texA = makeTexA();
+  var texB = makeTexB();
 
-  const texA = makeTexA();
-  const texB = makeTexB();
-  const texC = makeTexC();
+  /* =====================================================================
+   * 实时 Riso 半色调人像渲染
+   *   从摄像头抠出的人物 → 灰度采样 → 按灰度画不同大小的单色圆点
+   * ===================================================================== */
+  var htCanvas = document.createElement('canvas');   // 采样用小画布
+  var htCtx = htCanvas.getContext('2d', { willReadFrequently: true });
+  var HT_W = 128, HT_H = 96;                        // 灰度采样分辨率
+  htCanvas.width = HT_W;
+  htCanvas.height = HT_H;
+
+  /**
+   * 把 personCanvas（已抠好的人物）采样为灰度，然后在 targetCtx 上
+   * 以 ink 颜色绘制 Riso 半色调点阵（点大小 ∝ 亮度反转）
+   * offsetX/offsetY: 套印错位偏移（像素）
+   */
+  function drawRisoPortrait(targetCtx, ink, dotStep, offsetX, offsetY) {
+    // 把 personCanvas 缩小采样到 htCanvas
+    htCtx.clearRect(0, 0, HT_W, HT_H);
+    htCtx.drawImage(personCanvas, 0, 0, HT_W, HT_H);
+    var imgData = htCtx.getImageData(0, 0, HT_W, HT_H);
+    var d = imgData.data;
+
+    // 每个采样像素映射为一个圆点
+    var sx = W / HT_W;  // 采样像素→屏幕像素缩放
+    var sy = H / HT_H;
+    var maxR = Math.min(sx, sy) * 0.48;
+
+    targetCtx.fillStyle = ink;
+    for (var py = 0; py < HT_H; py += 1) {
+      for (var px = 0; px < HT_W; px += 1) {
+        var idx = (py * HT_W + px) * 4;
+        var a = d[idx + 3];  // alpha：0=背景 255=人物
+        if (a < 30) continue;
+        // 灰度（加权）
+        var lum = (d[idx] * 0.299 + d[idx + 1] * 0.587 + d[idx + 2] * 0.114) / 255;
+        // 反转：暗处→大点，亮处→小点
+        var density = (1 - lum) * (a / 255);
+        var r = maxR * Math.sqrt(density);
+        if (r < 0.4) continue;
+        var cx = px * sx + sx * 0.5 + offsetX;
+        var cy = py * sy + sy * 0.5 + offsetY;
+        targetCtx.beginPath();
+        targetCtx.arc(cx, cy, r, 0, Math.PI * 2);
+        targetCtx.fill();
+      }
+    }
+  }
 
   /* =====================================================================
    * 仿射纹理三角形（带轻微外扩消除接缝）
@@ -280,81 +364,59 @@
    * corners: {tl,bl,br,tr}
    * ===================================================================== */
   function drawLayer(c2d, tex, corners, style, time) {
-    const p0 = corners.tl, p1 = corners.bl, p2 = corners.br, p3 = corners.tr;
-    const bnd = quadBounds(p0, p1, p2, p3);
-    const diag = Math.hypot(bnd.w, bnd.h);
-    const distort = diag * 0.03;
+    var p0 = corners.tl, p1 = corners.bl, p2 = corners.br, p3 = corners.tr;
+    var bnd = quadBounds(p0, p1, p2, p3);
+    var diag = Math.hypot(bnd.w, bnd.h);
+    var distort = diag * 0.03;
 
-    // 在透明离屏画布上构建本层：网点之间保持透明，叠加特效用 source-atop 只作用于网点
-    const lc = layerCtx;
+    // ===== 离屏画布构建 Riso 半色调面片 =====
+    var lc = layerCtx;
     lc.setTransform(1, 0, 0, 1, 0, 0);
     lc.globalAlpha = 1.0;
     lc.globalCompositeOperation = 'source-over';
     lc.clearRect(0, 0, W, H);
 
-    drawTexturedQuad(lc, tex, p0, p1, p2, p3, time, distort);
-
-    // 风格化动态叠加（裁剪到四边形内）
-    lc.save();
+    // ① 四边形填充暖白纸底（覆盖摄像头背景）
     quadPath(lc, p0, p3, p2, p1);
-    lc.clip();
+    lc.fillStyle = '#f5f0e6';
+    lc.fill();
 
-    if (style === 'A') {
-      // 仅作用在网点上（source-atop），不填满透明空隙
-      lc.globalCompositeOperation = 'source-atop';
-      const gy = bnd.minY + ((time * 22) % (bnd.h + 60)) - 30;
-      const sweep = lc.createLinearGradient(0, gy - 40, 0, gy + 40);
-      sweep.addColorStop(0, 'rgba(40,8,10,0)');
-      sweep.addColorStop(0.5, 'rgba(40,8,10,0.35)');
-      sweep.addColorStop(1, 'rgba(40,8,10,0)');
-      lc.fillStyle = sweep;
-      lc.fillRect(bnd.minX - 20, bnd.minY - 40, bnd.w + 40, bnd.h + 80);
-    } else if (style === 'B') {
-      // 移动亮扫描带 + 偶发故障，仅作用在网点上
-      lc.globalCompositeOperation = 'source-atop';
-      const by = bnd.minY + ((time * 120) % (bnd.h + 80)) - 40;
-      const band = lc.createLinearGradient(0, by - 26, 0, by + 26);
-      band.addColorStop(0, 'rgba(120,230,255,0)');
-      band.addColorStop(0.5, 'rgba(150,240,255,0.28)');
-      band.addColorStop(1, 'rgba(120,230,255,0)');
-      lc.fillStyle = band;
-      lc.fillRect(bnd.minX - 20, bnd.minY - 40, bnd.w + 40, bnd.h + 80);
-      if (Math.sin(time * 7.0) > 0.86) {
-        lc.fillStyle = 'rgba(255,40,70,0.16)';
-        const gy2 = bnd.minY + Math.abs(Math.sin(time * 11.0)) * bnd.h;
-        lc.fillRect(bnd.minX - 6, gy2, bnd.w + 12, 6);
-        lc.fillStyle = 'rgba(40,255,200,0.16)';
-        lc.fillRect(bnd.minX - 6 + 4, gy2 + 3, bnd.w + 12, 6);
-      }
-    } else {
-      // 绿色微闪，仅作用在网点上
-      lc.globalCompositeOperation = 'source-atop';
-      const sx = Math.sin(time * 1.2) * 3;
-      const sg = lc.createLinearGradient(bnd.minX, 0, bnd.minX + bnd.w, 0);
-      sg.addColorStop(0, 'rgba(220,235,190,0.10)');
-      sg.addColorStop(0.5 + sx * 0.01, 'rgba(160,190,140,0.04)');
-      sg.addColorStop(1, 'rgba(30,55,36,0.12)');
-      lc.fillStyle = sg;
-      lc.fillRect(bnd.minX - 20, bnd.minY - 20, bnd.w + 40, bnd.h + 40);
-    }
-    lc.restore();
-
-    // 柔和边缘：描边（source-atop 仅描在已有网点边缘，避免实心轮廓填满空隙）
+    // ② 在四边形内叠加背景纹理（左侧墨块 + 静态网点）
     lc.save();
     lc.globalCompositeOperation = 'source-atop';
-    quadPath(lc, p0, p3, p2, p1);
-    lc.lineJoin = 'round';
-    lc.lineWidth = Math.max(1.5, diag * 0.012);
-    lc.strokeStyle =
-      style === 'A' ? 'rgba(255,170,150,0.5)' :
-      style === 'B' ? 'rgba(160,240,255,0.5)' :
-      'rgba(190,225,170,0.45)';
-    lc.stroke();
+    lc.globalAlpha = 0.7;
+    drawTexturedQuad(lc, tex, p0, p1, p2, p3, time, distort);
+    lc.globalAlpha = 1.0;
     lc.restore();
 
-    // 把整层以半透明方式合成到主画布（透出一点背景），并保持在最顶层
+    // ③ 人物 Riso 半色调肖像（灰度→网点）
+    if (mode === 'camera' && videoReady && latestMask) {
+      var mproc = processMask(latestMask);
+      if (mproc) {
+        // 在 personCanvas 上合成人物抠图
+        personCtx.setTransform(1, 0, 0, 1, 0, 0);
+        personCtx.clearRect(0, 0, W, H);
+        personCtx.globalCompositeOperation = 'source-over';
+        blitCoverMirror(personCtx, mproc);
+        personCtx.globalCompositeOperation = 'source-in';
+        blitCoverMirror(personCtx, video);
+        personCtx.globalCompositeOperation = 'source-over';
+
+        // 在四边形内画 Riso 半色调人像（source-atop 限制在四边形内）
+        lc.save();
+        lc.globalCompositeOperation = 'source-atop';
+        var ink = style === 'A' ? '#08238c' : '#c82020';
+        var offAmt = 2; // 套印错位量
+        var ox = style === 'A' ? -offAmt : offAmt;
+        var oy = style === 'A' ? offAmt : -offAmt;
+        drawRisoPortrait(lc, ink, 1, ox, oy);
+        lc.restore();
+      }
+    }
+
+    // 合成到主画布
     c2d.save();
-    c2d.globalAlpha = 0.8;
+    c2d.globalAlpha = 0.94;
     c2d.globalCompositeOperation = 'source-over';
     c2d.setTransform(1, 0, 0, 1, 0, 0);
     c2d.drawImage(layerCanvas, 0, 0);
@@ -367,9 +429,9 @@
     ctx.globalCompositeOperation = 'lighter';
     const all = [
       [pts.left.thumb, '180,60,60'], [pts.left.index, '120,200,255'],
-      [pts.left.middle, '150,220,160'], [pts.left.pinky, '200,200,160'],
+      [pts.left.middle, '150,220,160'],
       [pts.right.thumb, '180,60,60'], [pts.right.index, '120,200,255'],
-      [pts.right.middle, '150,220,160'], [pts.right.pinky, '200,200,160'],
+      [pts.right.middle, '150,220,160'],
     ];
     const pulse = 0.6 + 0.4 * Math.sin(time * 4.0);
     for (let i = 0; i < all.length; i++) {
@@ -450,7 +512,7 @@
       const fy = euro(side + '_' + idx + '_y', p.y, t);
       return toScreen(fx, fy);
     }
-    return { thumb: pt(LM.THUMB), index: pt(LM.INDEX), middle: pt(LM.MIDDLE), pinky: pt(LM.PINKY) };
+    return { thumb: pt(LM.THUMB), index: pt(LM.INDEX), middle: pt(LM.MIDDLE) };
   }
 
   /* 演示模式：合成双手数据 */
@@ -466,14 +528,13 @@
       const tilt = 0.05 * Math.sin(t * 1.1 + sgn);
 
       function f(order, wig) {
-        // order: 1.5(thumb) 0.5(index) -0.5(middle) -1.5(pinky)
         const nx = bx + sgn * (0.02 + 0.018 * Math.sin(t * 2.4 + wig)) + order * tilt;
         const ny = by + order * spread + 0.012 * Math.sin(t * 3.1 + wig);
         const fx = euro(side + '_d_' + wig + '_x', nx, t);
         const fy = euro(side + '_d_' + wig + '_y', ny, t);
         return toScreen(fx, fy);
       }
-      return { thumb: f(1.5, 0), index: f(0.5, 1), middle: f(-0.5, 2), pinky: f(-1.5, 3) };
+      return { thumb: f(1, 0), index: f(0, 1), middle: f(-1, 2) };
     }
     return { left: hand('L', 0.3), right: hand('R', 0.7) };
   }
@@ -484,7 +545,6 @@
     return {
       A: { tl: L.thumb, bl: L.index, br: R.index, tr: R.thumb },
       B: { tl: L.index, bl: L.middle, br: R.middle, tr: R.index },
-      C: { tl: L.middle, bl: L.pinky, br: R.pinky, tr: R.middle },
     };
   }
 
@@ -601,9 +661,8 @@
 
     if (h) {
       const corners = buildCorners(h);
-      drawLayer(ctx, texC, corners.C, 'C', t); // 绿
-      drawLayer(ctx, texB, corners.B, 'B', t); // 蓝
-      drawLayer(ctx, texA, corners.A, 'A', t); // 红
+      drawLayer(ctx, texB, corners.B, 'B', t); // 蓝（后）
+      drawLayer(ctx, texA, corners.A, 'A', t); // 红（前）
       drawFingerGlow(h, t);
     }
 
@@ -645,8 +704,8 @@
     if (video.readyState < 2) return;
     busy = true;
     try {
-      // 面片渲染在最顶层、覆盖人像，故无需人物分割；仅运行手部检测
       await hands.send({ image: video });
+      await selfie.send({ image: video });
     } catch (e) {
       /* 单帧失败忽略 */
     }
