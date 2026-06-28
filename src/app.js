@@ -136,15 +136,12 @@
    *   人物肖像由 drawLayer 实时采样灰度 → 渲染为单色网点阵列
    * ===================================================================== */
 
-  // Riso 半色调网点（左大右小，点大小由 x 位置的 power 衰减控制）
+  // Riso 半色调网点：均匀网格，点大小一致
   function risoDots(cx, S, color, step) {
+    var r = step * 0.32;
     cx.fillStyle = color;
-    for (let y = 0; y < S; y += step) {
-      for (let x = 0; x < S; x += step) {
-        var t = 1 - x / S;
-        t = Math.pow(t, 2.4);
-        var r = t * step * 0.48;
-        if (r < 0.5) continue;
+    for (var y = step * 0.5; y < S; y += step) {
+      for (var x = step * 0.5; x < S; x += step) {
         cx.beginPath();
         cx.arc(x, y, r, 0, Math.PI * 2);
         cx.fill();
@@ -172,53 +169,23 @@
     cx.fillRect(0, 0, S, S);
   }
 
-  /* Layer A —— 钴蓝：左侧纯色厚墨 + 蓝色网点右衰减 */
+  /* Layer A —— 钴蓝均匀网点 */
   function makeTexA() {
     var S = 512, c = newTexCanvas(S), x = c.getContext('2d');
     risoBase(x, S);
-    // 左侧纯色墨块
-    var g = x.createLinearGradient(0, 0, S * 0.45, 0);
-    g.addColorStop(0, '#08238c');
-    g.addColorStop(0.7, '#08238c');
-    g.addColorStop(1, 'rgba(8,35,140,0)');
-    x.fillStyle = g;
-    x.fillRect(0, 0, S, S);
-    // 半色调网点
-    risoDots(x, S, '#08238c', 12);
-    // 左侧厚墨暗压
-    var g2 = x.createLinearGradient(0, 0, S * 0.3, 0);
-    g2.addColorStop(0, 'rgba(0,0,0,0.25)');
-    g2.addColorStop(1, 'rgba(0,0,0,0)');
-    x.fillStyle = g2;
-    x.fillRect(0, 0, S, S);
-    // 颗粒
+    risoDots(x, S, '#08238c', 7);
     risoGrain(x, S);
-    addGrain(x, S, S, 25, 0);
+    addGrain(x, S, S, 20, 0);
     return c;
   }
 
-  /* Layer B —— 大红：左侧纯色厚墨 + 红色网点右衰减 */
+  /* Layer B —— 大红均匀网点 */
   function makeTexB() {
     var S = 512, c = newTexCanvas(S), x = c.getContext('2d');
     risoBase(x, S);
-    // 左侧纯色墨块
-    var g = x.createLinearGradient(0, 0, S * 0.45, 0);
-    g.addColorStop(0, '#e40000');
-    g.addColorStop(0.7, '#e40000');
-    g.addColorStop(1, 'rgba(228,0,0,0)');
-    x.fillStyle = g;
-    x.fillRect(0, 0, S, S);
-    // 半色调网点
-    risoDots(x, S, '#e40000', 12);
-    // 左侧厚墨暗压
-    var g2 = x.createLinearGradient(0, 0, S * 0.3, 0);
-    g2.addColorStop(0, 'rgba(0,0,0,0.25)');
-    g2.addColorStop(1, 'rgba(0,0,0,0)');
-    x.fillStyle = g2;
-    x.fillRect(0, 0, S, S);
-    // 颗粒
+    risoDots(x, S, '#e40000', 7);
     risoGrain(x, S);
-    addGrain(x, S, S, 25, 0);
+    addGrain(x, S, S, 20, 0);
     return c;
   }
 
@@ -231,7 +198,7 @@
    * ===================================================================== */
   var htCanvas = document.createElement('canvas');   // 采样用小画布
   var htCtx = htCanvas.getContext('2d', { willReadFrequently: true });
-  var HT_W = 128, HT_H = 96;                        // 灰度采样分辨率
+  var HT_W = 192, HT_H = 144;                        // 灰度采样分辨率（更高→网点更细密）
   htCanvas.width = HT_W;
   htCanvas.height = HT_H;
 
@@ -250,7 +217,7 @@
     // 每个采样像素映射为一个圆点
     var sx = W / HT_W;  // 采样像素→屏幕像素缩放
     var sy = H / HT_H;
-    var maxR = Math.min(sx, sy) * 0.48;
+    var maxR = Math.min(sx, sy) * 0.38;
 
     targetCtx.fillStyle = ink;
     for (var py = 0; py < HT_H; py += 1) {
