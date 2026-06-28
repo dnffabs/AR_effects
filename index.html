@@ -6,7 +6,6 @@
   <title>双手 AR 维度裂隙</title>
   <link rel="stylesheet" href="src/styles.css" />
   <script>
-    // MediaPipe 脚本加载失败标记（用于中文错误提示）
     window.__mpLoadError = false;
   </script>
   <script
@@ -19,28 +18,32 @@
     onerror="window.__mpLoadError = true;"></script>
 </head>
 <body>
-  <!-- 摄像头源（隐藏，仅作为绘制来源） -->
   <video id="cam" playsinline muted autoplay></video>
-
-  <!-- 主渲染画布 -->
   <canvas id="stage"></canvas>
 
-  <!-- 极简控制栏 -->
   <div id="controls" class="controls">
-    <button id="btnCamera" class="btn" type="button">启动摄像头</button>
-    <button id="btnDemo" class="btn" type="button">演示模式</button>
-    <button id="btnReset" class="btn btn-ghost" type="button">重置</button>
+    <button id="btnCamera" class="btn btn-camera" type="button">
+      <span class="btn-icon">&#9673;</span>摄像头
+    </button>
+    <button id="btnDemo" class="btn btn-demo" type="button">
+      <span class="btn-icon">&#9654;</span>演示模式
+    </button>
+    <div class="ctrl-divider"></div>
+    <button id="btnReset" class="btn btn-reset" type="button">
+      <span class="btn-icon">&#8635;</span>重置
+    </button>
+    <div class="ctrl-divider"></div>
     <div class="slider-wrap">
-      <label for="smooth">跟手平滑度</label>
+      <label for="smooth">平滑度</label>
       <input id="smooth" type="range" min="0" max="100" value="50" />
     </div>
   </div>
 
-  <!-- 状态 / 提示 -->
+  <div id="filter-selector" class="filter-selector"></div>
+
   <div id="status" class="status"></div>
-  <!-- 错误提示 -->
   <div id="error" class="error hidden"></div>
 
-  <script src="src/app.js"></script>
+  <script type="module" src="src/app.js"></script>
 </body>
 </html>
