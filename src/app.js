@@ -1,7 +1,7 @@
 'use strict';
 
 /* =========================================================================
- * 双手 AR 维度裂隙 —— 核心逻辑
+ * 双手 AR 维度裂隙 —— 核心逻辑（立体 Riso 3D 雕刻滤镜优化版）
  * 技术栈：HTML5 / CSS3 / ES6+ / Canvas 2D / MediaPipe Hands / Selfie Segmentation
  * 渲染顺序：摄像头画面 → AR 三层面片 → 人物前景（人物永远遮挡面片）
  * ========================================================================= */
@@ -131,9 +131,7 @@
   }
 
   /* =====================================================================
-   * Risograph 半色调肖像叠印风格
-   *   左侧纯色油墨厚涂 + 右侧半色调网点由灰度控制大小 + 油墨颗粒
-   *   人物肖像由 drawLayer 实时采样灰度 → 渲染为单色网点阵列
+   * Risograph 半色调肖像叠印风格纹理
    * ===================================================================== */
 
   // Riso 半色调网点：均匀网格，点大小一致
@@ -193,48 +191,119 @@
   var texB = makeTexB();
 
   /* =====================================================================
-   * 实时 Riso 半色调人像渲染
-   *   从摄像头抠出的人物 → 灰度采样 → 按灰度画不同大小的单色圆点
+   * 实时立体 Riso 3D 浮雕网点人像渲染
    * ===================================================================== */
   var htCanvas = document.createElement('canvas');   // 采样用小画布
   var htCtx = htCanvas.getContext('2d', { willReadFrequently: true });
-  var HT_W = 192, HT_H = 144;                        // 灰度采样分辨率（更高→网点更细密）
+  // 适当提高采样分辨率以精准捕捉明暗边缘与面部等高线
+  var HT_W = 240, HT_H = 180;
   htCanvas.width = HT_W;
   htCanvas.height = HT_H;
 
   /**
-   * 把 personCanvas（已抠好的人物）采样为灰度，然后在 targetCtx 上
-   * 以 ink 颜色绘制 Riso 半色调点阵（点大小 ∝ 亮度反转）
-   * offsetX/offsetY: 套印错位偏移（像素）
+   * 旋转网格立体 Riso 渲染器
+   * 采用光影高度场梯度偏移 + 各向异性网点流动
    */
-  function drawRisoPortrait(targetCtx, ink, dotStep, offsetX, offsetY) {
-    // 把 personCanvas 缩小采样到 htCanvas
+  function drawRisoPortrait3D(targetCtx, ink, dotStep, offsetX, offsetY, angleDegrees) {
+    // 1) 把经过抠图的人物缩放到采样画布
     htCtx.clearRect(0, 0, HT_W, HT_H);
     htCtx.drawImage(personCanvas, 0, 0, HT_W, HT_H);
     var imgData = htCtx.getImageData(0, 0, HT_W, HT_H);
     var d = imgData.data;
 
-    // 每个采样像素映射为一个圆点
-    var sx = W / HT_W;  // 采样像素→屏幕像素缩放
-    var sy = H / HT_H;
-    var maxR = Math.min(sx, sy) * 0.38;
+    // 辅助像素采样函数（带安全边界处理）
+    function getPixel(u, v) {
+      var tu = Math.max(0, Math.min(HT_W - 1, Math.round(u)));
+      var tv = Math.max(0, Math.min(HT_H - 1, Math.round(v)));
+      var idx = (tv * HT_W + tu) * 4;
+      var a = d[idx + 3];
+      var lum = (d[idx] * 0.299 + d[idx + 1] * 0.587 + d[idx + 2] * 0.114) / 255;
+      return { a: a, lum: lum };
+    }
 
     targetCtx.fillStyle = ink;
-    for (var py = 0; py < HT_H; py += 1) {
-      for (var px = 0; px < HT_W; px += 1) {
-        var idx = (py * HT_W + px) * 4;
-        var a = d[idx + 3];  // alpha：0=背景 255=人物
-        if (a < 30) continue;
-        // 灰度（加权）
-        var lum = (d[idx] * 0.299 + d[idx + 1] * 0.587 + d[idx + 2] * 0.114) / 255;
-        // 反转：暗处→大点，亮处→小点
-        var density = (1 - lum) * (a / 255);
-        var r = maxR * Math.sqrt(density);
+
+    // 2) 设置旋转网格参数
+    var angleRad = (angleDegrees || 0) * Math.PI / 180;
+    var cosA = Math.cos(angleRad);
+    var sinA = Math.sin(angleRad);
+
+    // 寻找覆盖全屏旋转矩阵的对角线安全跨度
+    var diag = Math.hypot(W, H);
+    var cx = W / 2;
+    var cy = H / 2;
+
+    var startI = Math.floor(-diag / 2 / dotStep);
+    var endI = Math.ceil(diag / 2 / dotStep);
+    var startJ = Math.floor(-diag / 2 / dotStep);
+    var endJ = Math.ceil(diag / 2 / dotStep);
+
+    // 3) 在旋转空间中生成网格，防止重现单调的横平竖直数字网点
+    for (var j = startJ; j <= endJ; j++) {
+      var yRot = j * dotStep;
+      for (var i = startI; i <= endI; i++) {
+        var xRot = i * dotStep;
+
+        // 逆旋转变换至屏幕坐标系
+        var sx = xRot * cosA - yRot * sinA + cx;
+        var sy = xRot * sinA + yRot * cosA + cy;
+
+        // 屏幕剪裁过滤
+        if (sx < 0 || sx >= W || sy < 0 || sy >= H) continue;
+
+        // 映射屏幕坐标至采样图坐标
+        var u = (sx / W) * HT_W;
+        var v = (sy / H) * HT_H;
+
+        var p = getPixel(u, v);
+        if (p.a < 35) continue; // 剔除背景噪声
+
+        // 4) 3D 高度场重建：计算索贝尔（Sobel）邻域亮度梯度
+        var pl = getPixel(u - 1, v);
+        var pr = getPixel(u + 1, v);
+        var pt = getPixel(u, v - 1);
+        var pb = getPixel(u, v + 1);
+
+        var gx = (pr.lum - pl.lum) * 0.5;
+        var gy = (pb.lum - pt.lum) * 0.5;
+        var gradMag = Math.hypot(gx, gy);
+
+        // 5) 立体厚涂油墨偏移（Chiaroscuro Relief Offset）
+        // 模仿厚重油墨在起伏表面发生的偏心堆叠，形成立体感
+        var shiftStrength = dotStep * 0.45;
+        var shiftX = -gx * shiftStrength;
+        var shiftY = -gy * shiftStrength;
+
+        var finalX = sx + shiftX + offsetX;
+        var finalY = sy + shiftY + offsetY;
+
+        // 6) 强化明暗对比度（非线性网点增益）
+        // 采用二次方曲线，使亮部极其通透、暗部由于网点合并（Dot Gain）形成扎实的阴影面
+        var density = Math.pow(1.0 - p.lum, 1.4) * (p.a / 255);
+        var maxRadius = dotStep * 0.72; // 网点略微允许交织叠印
+        var r = maxRadius * Math.sqrt(density);
+
         if (r < 0.4) continue;
-        var cx = px * sx + sx * 0.5 + offsetX;
-        var cy = py * sy + sy * 0.5 + offsetY;
+
+        // 7) 各向异性网点流动 (Anisotropic Contour Flow)
+        // 在边缘、凹凸褶皱处（梯度值高），将网点朝切线（等高线）方向拉伸，强化立体结构
         targetCtx.beginPath();
-        targetCtx.arc(cx, cy, r, 0, Math.PI * 2);
+        if (gradMag > 0.025) {
+          // 确定等高线切线角度（与明暗梯度正交）
+          var contourAngle = Math.atan2(gx, -gy);
+          
+          // 根据梯度强度决定拉伸比率
+          var stretch = 1.0 + gradMag * 1.8;
+          stretch = Math.min(stretch, 2.3); // 限制过度拉伸导致画面过碎
+
+          var rX = r * stretch;
+          var rY = r / stretch;
+
+          targetCtx.ellipse(finalX, finalY, rX, rY, contourAngle, 0, Math.PI * 2);
+        } else {
+          // 绝对平坦区域恢复为完美的饱满圆形，防止产生不自然的伪影
+          targetCtx.arc(finalX, finalY, r, 0, Math.PI * 2);
+        }
         targetCtx.fill();
       }
     }
@@ -348,7 +417,7 @@
     lc.fillStyle = '#f5f0e6';
     lc.fill();
 
-    // ② 在四边形内叠加背景纹理（左侧墨块 + 静态网点）
+    // ② 在四边形内叠加背景网格纹理
     lc.save();
     lc.globalCompositeOperation = 'source-atop';
     lc.globalAlpha = 0.7;
@@ -356,7 +425,7 @@
     lc.globalAlpha = 1.0;
     lc.restore();
 
-    // ③ 人物 Riso 半色调肖像（灰度→网点）
+    // ③ 人物 3D 立体 Riso 半色调肖像
     if (mode === 'camera' && videoReady && latestMask) {
       var mproc = processMask(latestMask);
       if (mproc) {
@@ -369,14 +438,22 @@
         blitCoverMirror(personCtx, video);
         personCtx.globalCompositeOperation = 'source-over';
 
-        // 在四边形内画 Riso 半色调人像（source-atop 限制在四边形内）
+        // 在四边形内画高立体度 Riso 半色调人像
         lc.save();
         lc.globalCompositeOperation = 'source-atop';
         var ink = style === 'A' ? '#08238c' : '#c82020';
-        var offAmt = 2; // 套印错位量
+        var offAmt = 2.5; // 轻微的套印错位
         var ox = style === 'A' ? -offAmt : offAmt;
         var oy = style === 'A' ? offAmt : -offAmt;
-        drawRisoPortrait(lc, ink, 1, ox, oy);
+
+        // 为两张网屏分别赋予特定的旋转角度（例如 15° 和 75°）
+        // 这样可以避免两层网点叠加时产生生硬的摩尔干涉条纹，反而形成经典的艺术叠印图案
+        var screenAngle = style === 'A' ? 15 : 75;
+        
+        // 动态网点大小：根据屏幕高宽智能缩放网格跨度
+        var dynamicDotStep = Math.max(7, Math.min(W, H) / 95);
+
+        drawRisoPortrait3D(lc, ink, dynamicDotStep, ox, oy, screenAngle);
         lc.restore();
       }
     }
